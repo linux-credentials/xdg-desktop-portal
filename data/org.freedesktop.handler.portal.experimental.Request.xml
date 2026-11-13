@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<!--
+ SPDX-License-Identifier: LGPL-2.1-or-later
+ SPDX-FileCopyrightText: Copyright © the xdg-desktop-portal contributors
+-->
+
+<node name="/" xmlns:doc="http://www.freedesktop.org/dbus/1.0/doc.dtd">
+  <!--
+      org.freedesktop.handler.portal.experimental.Request:
+      @short_description: Shared request handler interface
+
+      The Request interface is exported by the handler at the path passed in
+      the ``request_handle`` option of a handler method call, for the duration
+      of that call.
+
+      This is an internal interface between the frontend and the handler.
+      Applications close the :ref:`org.freedesktop.portal.Request` object
+      exported by the frontend instead, and the frontend calls
+      org.freedesktop.handler.portal.experimental.Request.Close() on the
+      handler.
+  -->
+  <interface name="org.freedesktop.handler.portal.experimental.Request">
+
+    <!--
+        Close:
+
+        Ends the request to which this object refers.
+        Dialogs and other UIs related to the request should be closed, and
+        the pending method call returns with the response code ``1``
+        (cancelled).
+    -->
+    <method name="Close">
+    </method>
+  </interface>
+</node>

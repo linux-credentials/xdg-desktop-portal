@@ -79,6 +79,48 @@ static XdpOptionKey get_credential_options[] = {
     {"public_key", G_VARIANT_TYPE_STRING, NULL},
 };
 
+static void handler_request_close_done(GObject *source, GAsyncResult *result,
+                                       gpointer data) {
+  g_autoptr(GError) error = NULL;
+
+  if (!xdp_dbus_experimental_handler_request_call_close_finish(
+          XDP_DBUS_EXPERIMENTAL_HANDLER_REQUEST(source), result, &error)) {
+    g_dbus_error_strip_remote_error(error);
+    g_warning("Failed to close handler request: %s", error->message);
+  }
+}
+
+static void on_request_closed(XdpRequest *request, gpointer data) {
+  XdpDbusExperimentalHandlerRequest *handler_request =
+      g_object_get_data(G_OBJECT(request), "handler-request");
+
+  g_debug("Closing handler request %s", request->id);
+  xdp_dbus_experimental_handler_request_call_close(
+      handler_request, NULL, handler_request_close_done, NULL);
+}
+
+/* Creates a proxy for the org.freedesktop.handler.portal.experimental.Request
+ * object that the handler exports at the request path for the duration of the
+ * call, and closes it when the client closes its request or disconnects. */
+static gboolean watch_request_close(Credential *credential,
+                                    XdpRequest *request, GError **error) {
+  g_autoptr(XdpDbusExperimentalHandlerRequest) handler_request = NULL;
+
+  handler_request = xdp_dbus_experimental_handler_request_proxy_new_sync(
+      g_dbus_proxy_get_connection(G_DBUS_PROXY(credential->handler)),
+      G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES |
+          G_DBUS_PROXY_FLAGS_DO_NOT_CONNECT_SIGNALS,
+      g_dbus_proxy_get_name(G_DBUS_PROXY(credential->handler)), request->id,
+      NULL, error);
+  if (!handler_request)
+    return FALSE;
+
+  g_object_set_data_full(G_OBJECT(request), "handler-request",
+                         g_steal_pointer(&handler_request), g_object_unref);
+  g_signal_connect(request, "closed", G_CALLBACK(on_request_closed), NULL);
+  return TRUE;
+}
+
 static void send_response_in_thread_func(GTask *task, gpointer source_object,
                                          gpointer task_data,
                                          GCancellable *cancellable) {
@@ -140,22 +182,10 @@ static gboolean handle_create_credential(XdpDbusExperimentalCredential *object,
   XdpRequest *request = xdp_request_from_invocation(invocation);
   const gchar *app_id = xdp_app_info_get_id(request->app_info);
   g_autoptr(GError) error = NULL;
-  g_autoptr(XdpDbusImplRequest) handler_request = NULL;
   g_auto(GVariantBuilder) options =
       G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE_VARDICT);
 
   REQUEST_AUTOLOCK(request);
-
-  handler_request = xdp_dbus_impl_request_proxy_new_sync(
-      g_dbus_proxy_get_connection(G_DBUS_PROXY(credential->handler)),
-      G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES,
-      g_dbus_proxy_get_name(G_DBUS_PROXY(credential->handler)), request->id,
-      NULL, &error);
-
-  if (!handler_request) {
-    g_dbus_method_invocation_return_gerror(invocation, error);
-    return G_DBUS_METHOD_INVOCATION_HANDLED;
-  }
 
   if (!xdp_filter_options(arg_options, &options, create_credential_options,
                           G_N_ELEMENTS(create_credential_options), NULL,
@@ -164,12 +194,16 @@ static gboolean handle_create_credential(XdpDbusExperimentalCredential *object,
     return G_DBUS_METHOD_INVOCATION_HANDLED;
   }
 
-  /* Let the handler export org.freedesktop.impl.portal.Request at this path,
-   * so that closing the request cancels the ceremony. */
+  if (!watch_request_close(credential, request, &error)) {
+    g_dbus_method_invocation_return_gerror(invocation, error);
+    return G_DBUS_METHOD_INVOCATION_HANDLED;
+  }
+
+  /* Let the handler export org.freedesktop.handler.portal.experimental.Request
+   * at this path, so that closing the request cancels the ceremony. */
   g_variant_builder_add(&options, "{sv}", "request_handle",
                         g_variant_new_object_path(request->id));
 
-  xdp_request_set_impl_request(request, handler_request);
   xdp_request_export(request,
                      g_dbus_method_invocation_get_connection(invocation));
 
@@ -219,22 +253,10 @@ static gboolean handle_get_credential(XdpDbusExperimentalCredential *object,
   XdpRequest *request = xdp_request_from_invocation(invocation);
   const gchar *app_id = xdp_app_info_get_id(request->app_info);
   g_autoptr(GError) error = NULL;
-  g_autoptr(XdpDbusImplRequest) handler_request = NULL;
   g_auto(GVariantBuilder) options =
       G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE_VARDICT);
 
   REQUEST_AUTOLOCK(request);
-
-  handler_request = xdp_dbus_impl_request_proxy_new_sync(
-      g_dbus_proxy_get_connection(G_DBUS_PROXY(credential->handler)),
-      G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES,
-      g_dbus_proxy_get_name(G_DBUS_PROXY(credential->handler)), request->id,
-      NULL, &error);
-
-  if (!handler_request) {
-    g_dbus_method_invocation_return_gerror(invocation, error);
-    return G_DBUS_METHOD_INVOCATION_HANDLED;
-  }
 
   if (!xdp_filter_options(arg_options, &options, get_credential_options,
                           G_N_ELEMENTS(get_credential_options), NULL, &error)) {
@@ -242,12 +264,16 @@ static gboolean handle_get_credential(XdpDbusExperimentalCredential *object,
     return G_DBUS_METHOD_INVOCATION_HANDLED;
   }
 
-  /* Let the handler export org.freedesktop.impl.portal.Request at this path,
-   * so that closing the request cancels the ceremony. */
+  if (!watch_request_close(credential, request, &error)) {
+    g_dbus_method_invocation_return_gerror(invocation, error);
+    return G_DBUS_METHOD_INVOCATION_HANDLED;
+  }
+
+  /* Let the handler export org.freedesktop.handler.portal.experimental.Request
+   * at this path, so that closing the request cancels the ceremony. */
   g_variant_builder_add(&options, "{sv}", "request_handle",
                         g_variant_new_object_path(request->id));
 
-  xdp_request_set_impl_request(request, handler_request);
   xdp_request_export(request,
                      g_dbus_method_invocation_get_connection(invocation));
 
