@@ -82,6 +82,7 @@ portal_impl_experimental_sources = files(
 )
 portal_handler_experimental_sources = files(
   'org.freedesktop.handler.portal.experimental.Credential.xml',
+  'org.freedesktop.handler.portal.experimental.Request.xml',
 )
 
 background_monitor_sources = files(
