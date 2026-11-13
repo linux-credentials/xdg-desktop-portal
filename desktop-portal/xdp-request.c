@@ -13,6 +13,14 @@
 #include "xdp-method-info.h"
 #include "xdp-utils.h"
 
+enum
+{
+  CLOSED,
+  N_SIGNALS,
+};
+
+static guint signals[N_SIGNALS];
+
 static void xdp_request_skeleton_iface_init (XdpDbusRequestIface *iface);
 
 G_DEFINE_FINAL_TYPE_WITH_CODE (XdpRequest,
@@ -71,6 +79,7 @@ xdp_request_handle_close (XdpDbusRequest        *object,
           return G_DBUS_METHOD_INVOCATION_HANDLED;
         }
 
+      g_signal_emit (request, signals[CLOSED], 0);
       xdp_request_unexport (request);
     }
 
@@ -116,6 +125,27 @@ xdp_request_class_init (XdpRequestClass *klass)
 
   gobject_class = G_OBJECT_CLASS (klass);
   gobject_class->finalize  = xdp_request_finalize;
+
+  /**
+   * XdpRequest::closed:
+   * @request: the request
+   *
+   * Emitted when the request is closed before it completed, either because
+   * the caller called org.freedesktop.portal.Request.Close() or because the
+   * caller disconnected.
+   *
+   * Portals that cancel their backend call by other means than
+   * org.freedesktop.impl.portal.Request can connect to this signal. The
+   * request lock is held while the signal is emitted, so handlers must not
+   * block.
+   */
+  signals[CLOSED] = g_signal_new ("closed",
+                                  G_TYPE_FROM_CLASS (klass),
+                                  G_SIGNAL_RUN_LAST,
+                                  0,
+                                  NULL, NULL,
+                                  NULL,
+                                  G_TYPE_NONE, 0);
 }
 
 static gboolean
@@ -197,6 +227,7 @@ on_peer_disconnect (XdpContext *context,
   if (request->impl_request)
     xdp_dbus_impl_request_call_close (request->impl_request, NULL, NULL, NULL);
 
+  g_signal_emit (request, signals[CLOSED], 0);
   xdp_request_unexport (request);
   xdp_context_unclaim_object_path (request->context, request->id);
 }
